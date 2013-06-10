@@ -1,12 +1,15 @@
 /*---------------------------------------------------------------------------*\
   =========                 |
-  \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+  \\      /  F ield         | Unsupported Contributions for OpenFOAM
    \\    /   O peration     |
     \\  /    A nd           | Copyright (C) 2011-2013 OpenFOAM Foundation
      \\/     M anipulation  |
 -------------------------------------------------------------------------------
+<2013-06-10> <Bruno Santos>: Added to stitchMesh the ability to process several
+                             patch pairs, through on a single dictionary file.
+-------------------------------------------------------------------------------
 License
-    This file is part of OpenFOAM.
+    This file is a derivative work of OpenFOAM.
 
     OpenFOAM is free software: you can redistribute it and/or modify it
     under the terms of the GNU General Public License as published by
@@ -22,14 +25,16 @@ License
     along with OpenFOAM.  If not, see <http://www.gnu.org/licenses/>.
 
 Application
-    stitchMesh
+    stitchMeshMultiPatch
 
 Description
     'Stitches' a mesh.
 
-    Takes a mesh and two patches and merges the faces on the two patches
+    Takes a mesh and two patches and merges the faces on the multiple pairs of patches
     (if geometrically possible) so the faces become internal.
 
+    The default dictionary file is "stitchMeshMultiPatchDict".
+    
     Can do
     - 'perfect' match: faces and points on patches align exactly. Order might
     be different though.
@@ -57,6 +62,10 @@ Description
     }
     \endverbatim
 
+
+Modifications
+    This code is based on the original stitchMesh and has the dictionary part
+    based on createPatch.
 
 \*---------------------------------------------------------------------------*/
 
@@ -205,20 +214,8 @@ int main(int argc, char *argv[])
     argList::noParallel();
     #include "addOverwriteOption.H"
     #include "addRegionOption.H"
-
-    argList::validArgs.append("masterPatch");
-    argList::validArgs.append("slavePatch");
-
-    argList::addBoolOption
-    (
-        "partial",
-        "couple partially overlapping patches"
-    );
-    argList::addBoolOption
-    (
-        "perfect",
-        "couple perfectly aligned patches"
-    );
+    #include "addDictOption.H"
+    
     argList::addOption
     (
         "toleranceDict",
@@ -233,61 +230,7 @@ int main(int argc, char *argv[])
 
     const word oldInstance = mesh.pointsInstance();
 
-    const word masterPatchName = args[1];
-    const word slavePatchName  = args[2];
-
-    const bool partialCover = args.optionFound("partial");
-    const bool perfectCover = args.optionFound("perfect");
     const bool overwrite    = args.optionFound("overwrite");
-
-    if (partialCover && perfectCover)
-    {
-        FatalErrorIn(args.executable())
-            << "Cannot supply both partial and perfect." << endl
-            << "Use perfect match option if the patches perfectly align"
-            << " (both vertex positions and face centres)" << endl
-            << exit(FatalError);
-    }
-
-
-    const word mergePatchName(masterPatchName + slavePatchName);
-    const word cutZoneName(mergePatchName + "CutFaceZone");
-
-    slidingInterface::typeOfMatch tom = slidingInterface::INTEGRAL;
-
-    if (partialCover)
-    {
-        Info<< "Coupling partially overlapping patches "
-            << masterPatchName << " and " << slavePatchName << nl
-            << "Resulting internal faces will be in faceZone " << cutZoneName
-            << nl
-            << "Any uncovered faces will remain in their patch"
-            << endl;
-
-        tom = slidingInterface::PARTIAL;
-    }
-    else if (perfectCover)
-    {
-        Info<< "Coupling perfectly aligned patches "
-            << masterPatchName << " and " << slavePatchName << nl
-            << "Resulting (internal) faces will be in faceZone " << cutZoneName
-            << nl << nl
-            << "Note: both patches need to align perfectly." << nl
-            << "Both the vertex"
-            << " positions and the face centres need to align to within" << nl
-            << "a tolerance given by the minimum edge length on the patch"
-            << endl;
-    }
-    else
-    {
-        Info<< "Coupling patches " << masterPatchName << " and "
-            << slavePatchName << nl
-            << "Resulting (internal) faces will be in faceZone " << cutZoneName
-            << nl << nl
-            << "Note: the overall area covered by both patches should be"
-            << " identical (\"integral\" interface)." << endl
-            << "If this is not the case use the -partial option" << nl << endl;
-    }
 
     // set up the tolerances for the sliding mesh
     dictionary slidingTolerances;
@@ -307,121 +250,189 @@ int main(int argc, char *argv[])
         slidingTolerances += toleranceFile;
     }
 
-    // Check for non-empty master and slave patches
-    checkPatch(mesh.boundaryMesh(), masterPatchName);
-    checkPatch(mesh.boundaryMesh(), slavePatchName);
 
-    // Create and add face zones and mesh modifiers
+    //Load up the main dictionary
+    const word dictName("stitchMeshMultiPatchDict");
+    #include "setSystemMeshDictionaryIO.H"
 
-    // Master patch
-    const polyPatch& masterPatch = mesh.boundaryMesh()[masterPatchName];
+    Info<< "Reading " << dictName << nl << endl;
 
-    // Make list of masterPatch faces
-    labelList isf(masterPatch.size());
+    IOdictionary dict(dictIO);
 
-    forAll(isf, i)
-    {
-        isf[i] = masterPatch.start() + i;
-    }
-
-    polyTopoChanger stitcher(mesh);
-    stitcher.setSize(1);
-
+    //zone clean up...
     mesh.pointZones().clearAddressing();
     mesh.faceZones().clearAddressing();
     mesh.cellZones().clearAddressing();
 
-    if (perfectCover)
+
+    // Read patch-pairs construct info from dictionary
+    PtrList<dictionary> patchPairsSources(dict.lookup("patchPairs"));
+
+    //Start up the stitcher
+    polyTopoChanger stitcher(mesh);
+    stitcher.setSize(patchPairsSources.size());
+
+    //Process the pairs
+    forAll(patchPairsSources, pairI)
     {
-        // Add empty zone for resulting internal faces
-        label cutZoneID = addFaceZone(mesh, cutZoneName);
+        dictionary& dict = patchPairsSources[pairI];
 
-        mesh.faceZones()[cutZoneID].resetAddressing
-        (
-            isf,
-            boolList(masterPatch.size(), false)
-        );
+        word masterPatchName(dict.lookup("nameMaster"));
+        word slavePatchName(dict.lookup("nameSlave"));
+        word matchType(dict.lookup("match"));
 
-        // Add the perfect interface mesh modifier
-        stitcher.set
-        (
-            0,
-            new perfectInterface
-            (
-                "couple",
-                0,
-                stitcher,
-                cutZoneName,
-                masterPatchName,
-                slavePatchName
-            )
-        );
-    }
-    else
-    {
-        label pointZoneID = addPointZone(mesh, mergePatchName + "CutPointZone");
-        mesh.pointZones()[pointZoneID] = labelList(0);
+        bool partialCover = matchType == "partial";
+        bool perfectCover = matchType == "perfect";
+        
+        word mergePatchName(masterPatchName + slavePatchName);
+        word cutZoneName(mergePatchName + "CutFaceZone");
 
-        label masterZoneID = addFaceZone(mesh, mergePatchName + "MasterZone");
+        slidingInterface::typeOfMatch tom = slidingInterface::INTEGRAL;
 
-        mesh.faceZones()[masterZoneID].resetAddressing
-        (
-            isf,
-            boolList(masterPatch.size(), false)
-        );
-
-        // Slave patch
-        const polyPatch& slavePatch = mesh.boundaryMesh()[slavePatchName];
-
-        labelList osf(slavePatch.size());
-
-        forAll(osf, i)
+        if (partialCover)
         {
-            osf[i] = slavePatch.start() + i;
+            Info<< "Coupling partially overlapping patches "
+                << masterPatchName << " and " << slavePatchName << nl
+                << "Resulting internal faces will be in faceZone " << cutZoneName
+                << nl
+                << "Any uncovered faces will remain in their patch"
+                << endl;
+
+            tom = slidingInterface::PARTIAL;
+        }
+        else if (perfectCover)
+        {
+            Info<< "Coupling perfectly aligned patches "
+                << masterPatchName << " and " << slavePatchName << nl
+                << "Resulting (internal) faces will be in faceZone " << cutZoneName
+                << nl << nl
+                << "Note: both patches need to align perfectly." << nl
+                << "Both the vertex"
+                << " positions and the face centres need to align to within" << nl
+                << "a tolerance given by the minimum edge length on the patch"
+                << endl;
+        }
+        else
+        {
+            Info<< "Coupling patches " << masterPatchName << " and "
+                << slavePatchName << nl
+                << "Resulting (internal) faces will be in faceZone " << cutZoneName
+                << nl << nl
+                << "Note: the overall area covered by both patches should be"
+                << " identical (\"integral\" interface)." << endl;
         }
 
-        label slaveZoneID = addFaceZone(mesh, mergePatchName + "SlaveZone");
-        mesh.faceZones()[slaveZoneID].resetAddressing
-        (
-            osf,
-            boolList(slavePatch.size(), false)
-        );
+        // Check for non-empty master and slave patches
+        checkPatch(mesh.boundaryMesh(), masterPatchName);
+        checkPatch(mesh.boundaryMesh(), slavePatchName);
 
-        // Add empty zone for cut faces
-        label cutZoneID = addFaceZone(mesh, cutZoneName);
-        mesh.faceZones()[cutZoneID].resetAddressing
-        (
-            labelList(0),
-            boolList(0, false)
-        );
+        // Create and add face zones and mesh modifiers
 
+        // Master patch
+        const polyPatch& masterPatch = mesh.boundaryMesh()[masterPatchName];
 
-        // Add the sliding interface mesh modifier
-        stitcher.set
-        (
-            0,
-            new slidingInterface
+        // Make list of masterPatch faces
+        labelList isf(masterPatch.size());
+
+        forAll(isf, i)
+        {
+            isf[i] = masterPatch.start() + i;
+        }
+
+        if (perfectCover)
+        {
+            // Add empty zone for resulting internal faces
+            label cutZoneID = addFaceZone(mesh, cutZoneName);
+
+            mesh.faceZones()[cutZoneID].resetAddressing
             (
-                "couple",
-                0,
-                stitcher,
-                mergePatchName + "MasterZone",
-                mergePatchName + "SlaveZone",
-                mergePatchName + "CutPointZone",
-                cutZoneName,
-                masterPatchName,
-                slavePatchName,
-                tom,                    // integral or partial
-                true                    // couple/decouple mode
-            )
-        );
-        static_cast<slidingInterface&>(stitcher[0]).setTolerances
-        (
-            slidingTolerances,
-            true
-        );
+                isf,
+                boolList(masterPatch.size(), false)
+            );
+
+            // Add the perfect interface mesh modifier
+            stitcher.set
+            (
+                pairI,
+                new perfectInterface
+                (
+                    "couple",
+                    pairI,
+                    stitcher,
+                    cutZoneName,
+                    masterPatchName,
+                    slavePatchName
+                )
+            );
+        }
+        else
+        {
+            label pointZoneID = addPointZone(mesh, mergePatchName + "CutPointZone");
+            mesh.pointZones()[pointZoneID] = labelList(0);
+
+            label masterZoneID = addFaceZone(mesh, mergePatchName + "MasterZone");
+
+            mesh.faceZones()[masterZoneID].resetAddressing
+            (
+                isf,
+                boolList(masterPatch.size(), false)
+            );
+
+            // Slave patch
+            const polyPatch& slavePatch = mesh.boundaryMesh()[slavePatchName];
+
+            labelList osf(slavePatch.size());
+
+            forAll(osf, i)
+            {
+                osf[i] = slavePatch.start() + i;
+            }
+
+            label slaveZoneID = addFaceZone(mesh, mergePatchName + "SlaveZone");
+            mesh.faceZones()[slaveZoneID].resetAddressing
+            (
+                osf,
+                boolList(slavePatch.size(), false)
+            );
+
+            // Add empty zone for cut faces
+            label cutZoneID = addFaceZone(mesh, cutZoneName);
+            mesh.faceZones()[cutZoneID].resetAddressing
+            (
+                labelList(0),
+                boolList(0, false)
+            );
+
+
+            // Add the sliding interface mesh modifier
+            stitcher.set
+            (
+                pairI,
+                new slidingInterface
+                (
+                    "couple",
+                    pairI,
+                    stitcher,
+                    mergePatchName + "MasterZone",
+                    mergePatchName + "SlaveZone",
+                    mergePatchName + "CutPointZone",
+                    cutZoneName,
+                    masterPatchName,
+                    slavePatchName,
+                    tom,                    // integral or partial
+                    true                    // couple/decouple mode
+                )
+            );
+            static_cast<slidingInterface&>(stitcher[pairI]).setTolerances
+            (
+                slidingTolerances,
+                true
+            );
+        }
+
     }
 
+    
 
     // Search for list of objects for this time
     IOobjectList objects(mesh, runTime.timeName());

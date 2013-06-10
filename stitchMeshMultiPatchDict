@@ -1,0 +1,55 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2.2.0                                 |
+|   \\  /    A nd           | Web:      www.OpenFOAM.org                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      stitchMeshMultiPatchDict;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+// Patches to create.
+patchPairs
+(
+    {
+        // Name of the master patch
+        nameMaster sideA;
+        
+        //Name of the slave patch
+        nameSlave  sideB;
+        
+        //matching criteria
+        // - 'perfect' match: faces and points on patches align exactly. Order might
+        // be different though.
+        // - 'integral' match: where the surfaces on both patches exactly
+        // match but the individual faces not
+        // - 'partial' match: where the non-overlapping part of the surface remains
+        // in the respective patch.
+        match      integral;
+    }
+    {
+        // Name of the master patch
+        nameMaster sideC;
+        
+        //Name of the slave patch
+        nameSlave  sideD;
+        
+        //matching criteria
+        // - 'perfect' match: faces and points on patches align exactly. Order might
+        // be different though.
+        // - 'integral' match: where the surfaces on both patches exactly
+        // match but the individual faces not
+        // - 'partial' match: where the non-overlapping part of the surface remains
+        // in the respective patch.
+        match      integral;
+    }
+);
+
+
+// ************************************************************************* //
