@@ -288,6 +288,9 @@ int main(int argc, char *argv[])
         word cutZoneName(mergePatchName + "CutFaceZone");
 
         slidingInterface::typeOfMatch tom = slidingInterface::INTEGRAL;
+        
+        //Add a separation space, for better visibility
+        Info<< nl << "--------------------" << nl;
 
         if (partialCover)
         {
