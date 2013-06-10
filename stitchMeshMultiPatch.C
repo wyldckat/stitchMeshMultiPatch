@@ -30,8 +30,8 @@ Application
 Description
     'Stitches' a mesh.
 
-    Takes a mesh and two patches and merges the faces on the multiple pairs of patches
-    (if geometrically possible) so the faces become internal.
+    Takes a mesh and one of more pairs of patches and merges the faces on each
+    pair of patches (if geometrically possible) so the faces become internal.
 
     The default dictionary file is "stitchMeshMultiPatchDict".
     
