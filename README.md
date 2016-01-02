@@ -70,7 +70,7 @@ The example file is accessible here: https://github.com/wyldckat/stitchMeshMulti
 Authorship
 ==========
 
-This `stitchMeshMultiPatch` utility was created by Bruno Santos (wyldckat@github).
+This `stitchMeshMultiPatch` utility was created by Bruno Santos (wyldckat@github working at [blueCAPE Lda](www.bluecape.com.pt)).
 
 Code is completely based on the original `stitchMesh` from OpenFOAM 2.2.x, as well as `createPatch` for the dictionary part.
 
